@@ -1,0 +1,34 @@
+# Node modules
+node_modules/
+
+# VS Code build output
+dist/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# VS Code settings
+.vscode/
+
+# Test coverage
+coverage/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# VSCE package
+*.vsix
+
+# CVS temp files
+temp/
+
+# TypeScript
+*.tsbuildinfo
+
+# Ignore environment files
+.env 
