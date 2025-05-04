@@ -35,8 +35,11 @@ const CVS_STATUS_MAP: Record<string, { label: string; icon: string; }> = {
     'A': { label: 'Added', icon: '$(diff-added)' },
     'R': { label: 'Removed', icon: '$(diff-removed)' },
     'D': { label: 'Deleted', icon: '$(trash)' },
-    'U': { label: 'Untracked', icon: '$(question)' },
-    // Add more as needed
+    'U': { label: 'Needs Update', icon: '$(cloud-download)' },
+    'C': { label: 'Conflict', icon: '$(warning)' },
+    '?': { label: 'Untracked', icon: '$(question)' },
+    '!': { label: 'Missing', icon: '$(circle-slash)' },
+    'P': { label: 'Needs Update', icon: '$(cloud-download)' }
 };
 
 class CvsStatusGroup extends vscode.TreeItem {
@@ -104,48 +107,45 @@ class CvsGroupedTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         if (!this.workspaceRoot) return [];
         if (!element) {
-            // Top-level: Local and Needs Update groups
+            // Top-level: All status groups
             return [
                 new vscode.TreeItem('Local Changes', vscode.TreeItemCollapsibleState.Expanded),
-                new vscode.TreeItem('Needs Update', vscode.TreeItemCollapsibleState.Expanded)
+                new vscode.TreeItem('Needs Update', vscode.TreeItemCollapsibleState.Expanded),
+                new vscode.TreeItem('Conflicts', vscode.TreeItemCollapsibleState.Expanded),
+                new vscode.TreeItem('Untracked', vscode.TreeItemCollapsibleState.Expanded),
+                new vscode.TreeItem('Missing', vscode.TreeItemCollapsibleState.Expanded)
             ];
         }
-        if (element.label === 'Local Changes') {
-            return await this.getLocalChangeItems();
+        switch (element.label) {
+            case 'Local Changes':
+                return await this.getLocalChangeItems();
+            case 'Needs Update':
+                return await this.getNeedsUpdateItems();
+            case 'Conflicts':
+                return await this.getConflictItems();
+            case 'Untracked':
+                return await this.getUntrackedItems();
+            case 'Missing':
+                return await this.getMissingItems();
+            default:
+                return [];
         }
-        if (element.label === 'Needs Update') {
-            return await this.getNeedsUpdateItems();
-        }
-        return [];
     }
 
     private async getLocalChangeItems(): Promise<vscode.TreeItem[]> {
-        // Use 'cvs diff -u' to find locally modified files
-        const cvsDiff = child_process.spawnSync('cvs', ['diff', '-u'], {
-            cwd: this.workspaceRoot,
-            encoding: 'utf8'
-        });
-        if (cvsDiff.status !== 0 && cvsDiff.status !== 1) {
-            return [];
-        }
-        const files = new Set<string>();
-        for (const line of cvsDiff.stdout.split('\n')) {
-            const match = line.match(/^Index: (.+)$/);
-            if (match) {
-                files.add(match[1].trim());
-            }
-        }
-        // Also include locally added/removed files from 'cvs -n update'
+        // Use 'cvs -n update' to find locally modified files
         const cvsStatus = child_process.spawnSync('cvs', ['-n', 'update'], {
             cwd: this.workspaceRoot,
             encoding: 'utf8'
         });
-        if (cvsStatus.status === 0 || cvsStatus.status === 1) {
-            for (const line of cvsStatus.stdout.split('\n')) {
-                const match = line.match(/^([A|R|M])\s+(.+)$/);
-                if (match) {
-                    files.add(match[2].trim());
-                }
+        if (cvsStatus.status !== 0 && cvsStatus.status !== 1) {
+            return [];
+        }
+        const files = new Set<string>();
+        for (const line of cvsStatus.stdout.split('\n')) {
+            const match = line.match(/^([MARD])\s+(.+)$/);
+            if (match) {
+                files.add(match[2].trim());
             }
         }
         return Array.from(files).map(filePath => {
@@ -156,6 +156,80 @@ class CvsGroupedTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
                 title: 'Show Local Changes',
                 arguments: [vscode.Uri.file(path.join(this.workspaceRoot, filePath))]
             };
+            item.contextValue = 'cvsStatusItem';
+            return item;
+        });
+    }
+
+    private async getConflictItems(): Promise<vscode.TreeItem[]> {
+        const cvsStatus = child_process.spawnSync('cvs', ['-n', 'update'], {
+            cwd: this.workspaceRoot,
+            encoding: 'utf8'
+        });
+        if (cvsStatus.status !== 0 && cvsStatus.status !== 1) {
+            return [];
+        }
+        const files = new Set<string>();
+        for (const line of cvsStatus.stdout.split('\n')) {
+            const match = line.match(/^C\s+(.+)$/);
+            if (match) {
+                files.add(match[1].trim());
+            }
+        }
+        return Array.from(files).map(filePath => {
+            const item = new vscode.TreeItem(filePath, vscode.TreeItemCollapsibleState.None);
+            item.iconPath = new vscode.ThemeIcon('warning');
+            item.command = {
+                command: 'cvs-diff-viewer.showLocalDiff',
+                title: 'Show Local Changes',
+                arguments: [vscode.Uri.file(path.join(this.workspaceRoot, filePath))]
+            };
+            item.contextValue = 'cvsStatusItem';
+            return item;
+        });
+    }
+
+    private async getUntrackedItems(): Promise<vscode.TreeItem[]> {
+        const cvsStatus = child_process.spawnSync('cvs', ['-n', 'update'], {
+            cwd: this.workspaceRoot,
+            encoding: 'utf8'
+        });
+        if (cvsStatus.status !== 0 && cvsStatus.status !== 1) {
+            return [];
+        }
+        const files = new Set<string>();
+        for (const line of cvsStatus.stdout.split('\n')) {
+            const match = line.match(/^\?\s+(.+)$/);
+            if (match) {
+                files.add(match[1].trim());
+            }
+        }
+        return Array.from(files).map(filePath => {
+            const item = new vscode.TreeItem(filePath, vscode.TreeItemCollapsibleState.None);
+            item.iconPath = new vscode.ThemeIcon('question');
+            item.contextValue = 'cvsStatusItem';
+            return item;
+        });
+    }
+
+    private async getMissingItems(): Promise<vscode.TreeItem[]> {
+        const cvsStatus = child_process.spawnSync('cvs', ['-n', 'update'], {
+            cwd: this.workspaceRoot,
+            encoding: 'utf8'
+        });
+        if (cvsStatus.status !== 0 && cvsStatus.status !== 1) {
+            return [];
+        }
+        const files = new Set<string>();
+        for (const line of cvsStatus.stdout.split('\n')) {
+            const match = line.match(/^!\s+(.+)$/);
+            if (match) {
+                files.add(match[1].trim());
+            }
+        }
+        return Array.from(files).map(filePath => {
+            const item = new vscode.TreeItem(filePath, vscode.TreeItemCollapsibleState.None);
+            item.iconPath = new vscode.ThemeIcon('circle-slash');
             item.contextValue = 'cvsStatusItem';
             return item;
         });
