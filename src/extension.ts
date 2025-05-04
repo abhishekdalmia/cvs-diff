@@ -241,7 +241,6 @@ export function activate(context: vscode.ExtensionContext) {
                     vscode.window.showErrorMessage(`File not found: ${filePath}`);
                     return;
                 }
-                const currentContent = fs.readFileSync(filePath, 'utf8');
                 // Get BASE revision from CVS/Entries
                 const baseRevision = getBaseRevision(filePath);
                 if (!baseRevision) {
@@ -263,11 +262,10 @@ export function activate(context: vscode.ExtensionContext) {
                     fs.mkdirSync(tempDir, { recursive: true });
                 }
                 const baseFile = path.join(tempDir, generateTempFileName('base_' + filePath));
-                const currentFile = path.join(tempDir, generateTempFileName('current_' + filePath));
                 fs.writeFileSync(baseFile, baseContent);
-                fs.writeFileSync(currentFile, currentContent);
                 const baseUri = vscode.Uri.file(baseFile);
-                const currentUri = vscode.Uri.file(currentFile);
+                // Use the real file for the right side
+                const currentUri = vscode.Uri.file(filePath);
                 await vscode.commands.executeCommand('vscode.diff', baseUri, currentUri, `CVS Local Diff: ${path.basename(filePath)} (BASE vs Working Copy)`);
             } catch (error) {
                 vscode.window.showErrorMessage(`Error showing local CVS diff: ${error}`);
@@ -284,28 +282,6 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 const relativePath = vscode.workspace.asRelativePath(uri);
                 const filePath = sanitizePath(uri.fsPath);
-                // Get BASE version using cvs diff -u (reconstruct base)
-                const cvsDiff = child_process.spawnSync('cvs', ['diff', '-u', relativePath], {
-                    cwd: workspaceFolder.uri.fsPath,
-                    encoding: 'utf8'
-                });
-                const currentContent = fs.readFileSync(filePath, 'utf8');
-                // Parse the diff output to reconstruct BASE
-                const baseLines: string[] = [];
-                let inHunk = false;
-                for (const line of cvsDiff.stdout.split('\n')) {
-                    if (line.startsWith('@@')) {
-                        inHunk = true;
-                        continue;
-                    }
-                    if (!inHunk) continue;
-                    if (line.startsWith('-')) {
-                        baseLines.push(line.substring(1));
-                    } else if (line.startsWith(' ')) {
-                        baseLines.push(line.substring(1));
-                    }
-                }
-                const baseContent = baseLines.length > 0 ? baseLines.join('\n') : currentContent;
                 // Get latest repo version
                 const cvsOriginal = child_process.spawnSync('cvs', ['update', '-p', relativePath], {
                     cwd: workspaceFolder.uri.fsPath,
@@ -320,13 +296,12 @@ export function activate(context: vscode.ExtensionContext) {
                 if (!fs.existsSync(tempDir)) {
                     fs.mkdirSync(tempDir, { recursive: true });
                 }
-                const baseFile = path.join(tempDir, generateTempFileName('base_' + filePath));
                 const originalFile = path.join(tempDir, generateTempFileName('original_' + filePath));
-                fs.writeFileSync(baseFile, baseContent);
                 fs.writeFileSync(originalFile, originalContent);
-                const baseUri = vscode.Uri.file(baseFile);
                 const originalUri = vscode.Uri.file(originalFile);
-                await vscode.commands.executeCommand('vscode.diff', baseUri, originalUri, `CVS Update Diff: ${path.basename(filePath)} (BASE vs Repository)`);
+                // Use the real file for the right side
+                const currentUri = vscode.Uri.file(filePath);
+                await vscode.commands.executeCommand('vscode.diff', originalUri, currentUri, `CVS Update Diff: ${path.basename(filePath)} (Repository vs Working Copy)`);
             } catch (error) {
                 vscode.window.showErrorMessage(`Error showing CVS update diff: ${error}`);
             }
