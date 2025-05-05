@@ -236,21 +236,38 @@ class CvsGroupedTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     }
 
     private async getNeedsUpdateItems(): Promise<vscode.TreeItem[]> {
-        // Use 'cvs -n update' to find files with U or P status
-        const cvsStatus = child_process.spawnSync('cvs', ['-n', 'update'], {
+        // Use 'cvs status' to find files that are different from repo
+        const cvsStatus = child_process.spawnSync('cvs', ['status'], {
             cwd: this.workspaceRoot,
             encoding: 'utf8'
         });
-        if (cvsStatus.status !== 0 && cvsStatus.status !== 1) {
+        if (cvsStatus.status !== 0) {
             return [];
         }
+
         const files = new Set<string>();
-        for (const line of cvsStatus.stdout.split('\n')) {
-            const match = line.match(/^([UP])\s+(.+)$/);
-            if (match) {
-                files.add(match[2].trim());
+        const statusOutput = cvsStatus.stdout;
+        const lines = statusOutput.split('\n');
+        let currentFile = '';
+        let workingRevision = '';
+        let repositoryRevision = '';
+
+        for (const line of lines) {
+            if (line.startsWith('File:')) {
+                currentFile = line.split('File:')[1].trim();
+                workingRevision = '';
+                repositoryRevision = '';
+            } else if (line.includes('Working revision:')) {
+                workingRevision = line.split('Working revision:')[1].trim();
+            } else if (line.includes('Repository revision:')) {
+                repositoryRevision = line.split('Repository revision:')[1].trim();
+                // If working revision is different from repository revision, add to list
+                if (workingRevision && repositoryRevision && workingRevision !== repositoryRevision) {
+                    files.add(currentFile);
+                }
             }
         }
+
         return Array.from(files).map(filePath => {
             const item = new vscode.TreeItem(filePath, vscode.TreeItemCollapsibleState.None);
             item.iconPath = new vscode.ThemeIcon('cloud-download');
@@ -356,26 +373,30 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 const relativePath = vscode.workspace.asRelativePath(uri);
                 const filePath = sanitizePath(uri.fsPath);
+                
                 // Get latest repo version
-                const cvsOriginal = child_process.spawnSync('cvs', ['update', '-p', relativePath], {
+                const cvsRepo = child_process.spawnSync('cvs', ['update', '-p', relativePath], {
                     cwd: workspaceFolder.uri.fsPath,
                     encoding: 'utf8'
                 });
-                if (cvsOriginal.status !== 0) {
-                    vscode.window.showErrorMessage(`CVS update -p failed: ${cvsOriginal.stderr}`);
+                if (cvsRepo.status !== 0) {
+                    vscode.window.showErrorMessage(`CVS update -p failed: ${cvsRepo.stderr}`);
                     return;
                 }
-                const originalContent = cvsOriginal.stdout;
+                
+                const repoContent = cvsRepo.stdout;
                 const tempDir = path.join(context.extensionPath, 'temp');
                 if (!fs.existsSync(tempDir)) {
                     fs.mkdirSync(tempDir, { recursive: true });
                 }
-                const originalFile = path.join(tempDir, generateTempFileName('original_' + filePath));
-                fs.writeFileSync(originalFile, originalContent);
-                const originalUri = vscode.Uri.file(originalFile);
+                
+                const repoFile = path.join(tempDir, generateTempFileName('repo_' + filePath));
+                fs.writeFileSync(repoFile, repoContent);
+                const repoUri = vscode.Uri.file(repoFile);
+                
                 // Use the real file for the right side
                 const currentUri = vscode.Uri.file(filePath);
-                await vscode.commands.executeCommand('vscode.diff', originalUri, currentUri, `CVS Update Diff: ${path.basename(filePath)} (Repository vs Working Copy)`);
+                await vscode.commands.executeCommand('vscode.diff', repoUri, currentUri, `CVS Update Diff: ${path.basename(filePath)} (Repository vs Working Copy)`);
             } catch (error) {
                 vscode.window.showErrorMessage(`Error showing CVS update diff: ${error}`);
             }
