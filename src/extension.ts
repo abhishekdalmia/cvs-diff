@@ -251,16 +251,24 @@ class CvsGroupedTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
         let currentFile = '';
         let workingRevision = '';
         let repositoryRevision = '';
+        let status = '';
 
         for (const line of lines) {
             if (line.startsWith('File:')) {
                 currentFile = line.split('File:')[1].trim();
                 workingRevision = '';
                 repositoryRevision = '';
+                status = '';
             } else if (line.includes('Working revision:')) {
                 workingRevision = line.split('Working revision:')[1].trim();
             } else if (line.includes('Repository revision:')) {
                 repositoryRevision = line.split('Repository revision:')[1].trim();
+            } else if (line.includes('Status:')) {
+                status = line.split('Status:')[1].trim();
+                // Only add files that are not Up-to-date or Locally Modified
+                if (status === 'Up-to-date' || status === 'Locally Modified') {
+                    continue;
+                }
                 // If working revision is different from repository revision, add to list
                 if (workingRevision && repositoryRevision && workingRevision !== repositoryRevision) {
                     files.add(currentFile);
@@ -270,7 +278,6 @@ class CvsGroupedTreeProvider implements vscode.TreeDataProvider<vscode.TreeItem>
 
         return Array.from(files).map(filePath => {
             const item = new vscode.TreeItem(filePath, vscode.TreeItemCollapsibleState.None);
-            item.iconPath = new vscode.ThemeIcon('cloud-download');
             item.command = {
                 command: 'cvs-diff-viewer.showNeedsUpdateDiff',
                 title: 'Show Update Diff',
